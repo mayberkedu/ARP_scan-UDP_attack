@@ -31,9 +31,12 @@ def random_ip(cidr, exclude):
     return random.choice(hosts)
 
 def disconnect_iface(iface):
-    run(["sudo","iw","dev",iface,"disconnect"])
-    print(f"[{time.strftime('%H:%M:%S')}] A ayrılıyor (disassociate)")
-
+    try:
+        run(["sudo", "iw", "dev", iface, "disconnect"])
+        print(f"[{time.strftime('%H:%M:%S')}] {iface} disassociated")
+    except subprocess.CalledProcessError:
+    # Interface was already disconnected (or managed elsewhere) – proceed anyway
+        print(f"[!] Could not disconnect {iface} (maybe already down). Continuing.")
 def set_iface_mac(iface, mac):
     run(["sudo","ip","link","set","dev",iface,"down"])
     run(["sudo","ip","link","set","dev",iface,"address",mac])
